@@ -147,23 +147,25 @@ a new one but do not retry the query.
 Throwables thrown in the agent will be manually rethrown in the caller
 thread."
   [conn & query]
-  (let [p (promise)]
-    (send (socket-agent conn)
-          (fn [[socket in out spec :as s-and-s]]
-            (try
-              (.write out (.getBytes (apply str query)))
-              (deliver p (if (next query)
-                           (doall (repeatedly (count query) #(response in)))
-                           (response in)))
-              s-and-s
-              (catch Throwable e
-                (deliver p e) (close-socket-and-streams s-and-s)
-                (socket-and-streams spec)))))
-    (let [result (deref p)]
-      ;; this seems potentially slow due to reflection - benchmark, maybe use protocol
-      (if (instance? Throwable result)
-        (throw result)
-        result))))
+  (if (empty? query)
+    nil
+    (let [p (promise)]
+      (send (socket-agent conn)
+            (fn [[socket in out spec :as s-and-s]]
+              (try
+                (dorun (map #(.write out (.getBytes %)) query))
+                (deliver p (if (next query)
+                             (doall (repeatedly (count query) #(response in)))
+                             (response in)))
+                s-and-s
+                (catch Throwable e
+                  (deliver p e) (close-socket-and-streams s-and-s)
+                  (socket-and-streams spec)))))
+      (let [result (deref p)]
+        ;; this seems potentially slow due to reflection - benchmark, maybe use protocol
+        (if (instance? Throwable result)
+          (throw result)
+          result)))))
 
 (defn receive-message
   "Used in conjunction with an open channel to handle messages that
