@@ -13,6 +13,8 @@
   (:import (java.net Socket)
            (java.io BufferedInputStream DataInputStream)))
 
+(declare select)
+
 (defn query
   "The new [unified protocol][up] was introduced in Redis 1.2, but it became
   the standard way for talking with the Redis server in Redis 2.0.
@@ -111,16 +113,27 @@
     (.setTcpNoDelay true)
     (.setKeepAlive true)))
 
+(defn- close-socket-and-streams
+  [[socket in out _]]
+  (.close socket) (.close in) (.close out))
+
 (defn- socket-and-streams
   [spec]
   (let [socket (doto (socket spec) (.setSoTimeout (:timeout spec)))
         in (DataInputStream. (BufferedInputStream. (.getInputStream socket)))
         out (.getOutputStream socket)]
-    [socket in out spec]))
-
-(defn- close-socket-and-streams
-  [[socket in out _]]
-  (.close socket) (.close in) (.close out))
+    (try
+      (when (:db spec)
+        (.write out (.getBytes (select (:db spec))))
+        (response in))
+      [socket in out spec]
+      (catch Throwable t
+        ;; if setting the db fails, just return nil so that this will
+        ;; be reinitialized next time someone wants a connection. this
+        ;; connection will probably fail, but there's not a lot we can
+        ;; do about that.
+        (close-socket-and-streams [socket in out spec])
+        nil))))
 
 (def socket-atom (atom {}))
 
