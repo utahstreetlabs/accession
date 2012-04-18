@@ -84,6 +84,9 @@
   * With multi-bulk reply the first byte of the reply will be `*`"
   (fn [in] (char (.readByte in))))
 
+(defmethod response :default [in]
+  (throw (Exception. (str "Unexpected response from redis: " (.readLine in)))))
+
 (defmethod response \- [in]
   (.readLine in))
 
@@ -172,12 +175,13 @@ thread."
                              (response in)))
                 s-and-s
                 (catch Throwable e
-                  (deliver p e) (close-socket-and-streams s-and-s)
+                  (deliver p e)
+                  (close-socket-and-streams s-and-s)
                   (socket-and-streams spec)))))
       (let [result (deref p)]
         ;; this seems potentially slow due to reflection - benchmark, maybe use protocol
         (if (instance? Throwable result)
-          (throw result)
+          (throw (Throwable. "Caught Throwable in agent" result))
           result)))))
 
 (defn receive-message
