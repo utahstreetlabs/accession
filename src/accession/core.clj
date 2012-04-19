@@ -72,7 +72,7 @@
 (defprotocol IRedisChannel
   (close [this]))
 
-(defmulti response
+(defn response [in]
   "Redis will reply to commands with different kinds of replies. It is
   possible to check the kind of reply from the first byte sent by the
   server:
@@ -82,27 +82,22 @@
   * With an integer number the first byte of the reply will be `:`
   * With bulk reply the first byte of the reply will be `$`
   * With multi-bulk reply the first byte of the reply will be `*`"
-  (fn [in] (char (.readByte in))))
-
-(defmethod response \- [in]
-  (.readLine in))
-
-(defmethod response \+ [in]
-  (.readLine in))
-
-(defmethod response \$ [in]
-  (let [length (Integer/parseInt (.readLine in))]
-    (when (not= length -1)
-      (let [content (byte-array (+ 2 length))]
-        (.read in content)
-        (String. content 0 length)))))
-
-(defmethod response \: [in]
-  (Long/parseLong (.readLine in)))
-
-(defmethod response \* [in]
-  (let [length (Integer/parseInt (.readLine in))]
-    (doall (repeatedly length #(response in)))))
+  (let [c (char (.readByte in))]
+   (case c
+     \- (.readLine in)
+     \+ (.readLine in)
+     \$ (let [length (Integer/parseInt (.readLine in))]
+          (when (not= length -1)
+            (let [content (byte-array length)]
+              (String.
+               (loop [offset 0]
+                 (if (< offset length)
+                   (recur (.read in content offset (- length offset)))
+                   (do (.readByte in) (.readByte in) content)))))))
+     \: (Long/parseLong (.readLine in))
+     \* (let [length (Integer/parseInt (.readLine in))]
+          (doall (repeatedly length #(response in))))
+     (throw (Exception. (str "Unexpected response from redis: " c (.readLine in)))))))
 
 (defn- socket
   "Creates an initial socket for consumption attached to the proper
@@ -172,12 +167,13 @@ thread."
                              (response in)))
                 s-and-s
                 (catch Throwable e
-                  (deliver p e) (close-socket-and-streams s-and-s)
+                  (deliver p e)
+                  (close-socket-and-streams s-and-s)
                   (socket-and-streams spec)))))
       (let [result (deref p)]
         ;; this seems potentially slow due to reflection - benchmark, maybe use protocol
         (if (instance? Throwable result)
-          (throw result)
+          (throw (Throwable. "Caught Throwable in agent" result))
           result)))))
 
 (defn receive-message
